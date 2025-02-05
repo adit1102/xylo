@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hand Detection with Teachable Machine</title>
+</head>
+<body>
+    <div>Teachable Machine Image Model</div>
+    <button type="button" onclick="init()">Start</button>
+    <div id="webcam-container"></div>
+    <div id="label-container"></div>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+    <script type="text/javascript">
+        // Fixed URL by removing the "./" which is unnecessary
+        const URL = "https://adit1102.github.io/xylophone/my_model/";
+        let model, webcam, labelContainer, maxPredictions;
+        let port;
+
+        async function init() {
+            try {
+                const modelURL = URL + "model.json";
+                const metadataURL = URL + "metadata.json";
+                
+                // Load the model
+                model = await tmImage.load(modelURL, metadataURL);
+                maxPredictions = model.getTotalClasses();
+
+                // Setup webcam
+                const flip = true;
+                webcam = new tmImage.Webcam(200, 200, flip);
+                await webcam.setup();
+                await webcam.play();
+
+                // Append elements to the DOM
+                document.getElementById("webcam-container").appendChild(webcam.canvas);
+                labelContainer = document.getElementById("label-container");
+                for (let i = 0; i < maxPredictions; i++) {
+                    labelContainer.appendChild(document.createElement("div"));
+                }
+
+                // Start prediction loop
+                window.requestAnimationFrame(loop);
+
+                // Connect to serial port
+                await connectSerial();
+            } catch (error) {
+                console.error("Error during initialization:", error);
+                alert("Error initializing the model. Please check the console for details.");
+            }
+        }
+
+        async function connectSerial() {
+            try {
+                const requestPort = await navigator.serial.requestPort();
+                await requestPort.open({ baudRate: 9600 });
+                port = requestPort;
+            } catch (error) {
+                console.error("Error connecting to serial port:", error);
+            }
+        }
+
+        async function loop() {
+            webcam.update();
+            await predict();
+            window.requestAnimationFrame(loop);
+        }
+
+        async function predict() {
+            try {
+                const prediction = await model.predict(webcam.canvas);
+                
+                for (let i = 0; i < maxPredictions; i++) {
+                    const classPrediction = prediction[i].className + ": " + prediction[i].probability.toFixed(2);
+                    labelContainer.childNodes[i].innerHTML = classPrediction;
+                }
+
+                // Check for hand positions with improved confidence threshold
+                if (prediction[0].className === "Right Hand" && prediction[0].probability > 0.8) {
+                    await sendDataToArduino("right");
+                } else if (prediction[1].className === "Left Hand" && prediction[1].probability > 0.8) {
+                    await sendDataToArduino("left");
+                }
+            } catch (error) {
+                console.error("Error during prediction:", error);
+            }
+        }
+
+        async function sendDataToArduino(message) {
+            if (!port) {
+                console.warn("Serial port not connected");
+                return;
+            }
+
+            try {
+                const writer = port.writable.getWriter();
+                const encoder = new TextEncoder();
+                const data = encoder.encode(message);
+                await writer.write(data);
+                writer.releaseLock();
+            } catch (error) {
+                console.error("Error sending data to Arduino:", error);
+            }
+        }
+    </script>
+</body>
+</html>
